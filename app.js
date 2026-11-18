@@ -4,7 +4,7 @@ const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (value = "") => String(value).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const labels = { member: "УЧАСТНИК", deputy: "ЗАМЕСТИТЕЛЬ", leader: "ЛИДЕР", developer: "РАЗРАБОТЧИК" };
-let db = null, user = null, profile = null, role = "guest", roster = [], posts = [], polls = [], myVotes = new Map(), authMode = "login", toastTimer;
+let db = null, user = null, profile = null, role = "guest", roster = [], posts = [], polls = [], myVotes = new Map(), reportRows = [], editingReportId = null, authMode = "login", toastTimer;
 
 function toast(message, bad = false) {
   const t = $("#toast"); t.textContent = message; t.classList.remove("hidden"); t.classList.toggle("bad", bad);
@@ -93,9 +93,16 @@ function renderPolls() {
 }
 async function loadReports() {
   if (!user) return;
-  const { data, error } = await db.from("daily_reports").select("report_date,neurons,note,created_at").eq("user_id", user.id).order("report_date", { ascending: false }).limit(30);
+  const { data, error } = await db.from("daily_reports").select("id,report_date,neurons,note,created_at").eq("user_id", user.id).order("report_date", { ascending: false }).limit(30);
   if (error) throw error;
-  $("#myReports").innerHTML = data?.length ? data.map(r => `<div class="report-row"><div><strong>${new Date(`${r.report_date}T12:00:00`).toLocaleDateString("ru-RU")}</strong><small>${esc(r.note || "Без заметки")}</small></div><span class="row-value">+${Number(r.neurons).toLocaleString("ru-RU")} N</span></div>`).join("") : empty("Отчётов ещё нет. Отправь первый!");
+  reportRows = data ?? [];
+  $("#myReports").innerHTML = reportRows.length ? reportRows.map(r => `<div class="report-row"><div><strong>${new Date(`${r.report_date}T12:00:00`).toLocaleDateString("ru-RU")}</strong><small>${esc(r.note || "Без заметки")}</small></div><span class="row-value">+${Number(r.neurons).toLocaleString("ru-RU")} N</span><button class="text-button" data-edit-report="${esc(r.id)}">ИЗМЕНИТЬ</button></div>`).join("") : empty("Отчётов ещё нет. Отправь первый!");
+}
+function resetReportEditor() {
+  editingReportId = null; $("#reportForm").reset();
+  $("#reportFormTitle").textContent = "СЕГОДНЯ · КИЕВ";
+  $("#reportSubmit").textContent = "ОТПРАВИТЬ ОТЧЁТ ↗";
+  $("#cancelReportEdit").classList.add("hidden");
 }
 async function loadRoleList() {
   if (role !== "developer") return;
@@ -128,8 +135,31 @@ $("#tabLogin").addEventListener("click", () => showAuthMode("login")); $("#tabRe
 $$("[data-close-dialog]").forEach(b => b.addEventListener("click", () => $("#authDialog").close()));
 $("#authDialog").addEventListener("click", e => { if (e.target === $("#authDialog")) $("#authDialog").close(); });
 $("#rosterSearch").addEventListener("input", renderRoster); $("#rosterPeriod").addEventListener("change", renderRoster);
-$$(".swatch").forEach(b => b.addEventListener("click", () => { const c = b.dataset.color; document.documentElement.style.setProperty("--accent", c); const v = c.match(/[a-f\d]{2}/gi).map(x => parseInt(x, 16)); document.documentElement.style.setProperty("--accent-rgb", v.join(",")); localStorage.setItem("askorbinki-accent", c); }));
-try { const c = localStorage.getItem("askorbinki-accent"); if (c) { document.documentElement.style.setProperty("--accent", c); document.documentElement.style.setProperty("--accent-rgb", c.match(/[a-f\d]{2}/gi).map(x => parseInt(x, 16)).join(",")); } } catch {}
+function applyAccent(color, save = true) {
+  const hex = /^#[\da-f]{6}$/i.test(color) ? color : "#b6f34a";
+  const rgb = hex.match(/[\da-f]{2}/gi).map(part => parseInt(part, 16)).join(",");
+  document.documentElement.style.setProperty("--accent", hex);
+  document.documentElement.style.setProperty("--accent-rgb", rgb);
+  $("#accentPicker").value = hex;
+  $$(".swatch").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.color.toLowerCase() === hex.toLowerCase())));
+  if (save) { try { localStorage.setItem("askorbinki-accent", hex); } catch {} }
+}
+function applyTheme(theme, save = true) {
+  const value = theme === "light" ? "light" : "dark";
+  document.documentElement.dataset.theme = value;
+  $("#themeToggle").textContent = value === "dark" ? "ВКЛЮЧИТЬ ДНЕВНУЮ" : "ВКЛЮЧИТЬ НОЧНУЮ";
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", value === "dark" ? "#0b100d" : "#edf3e9");
+  if (save) { try { localStorage.setItem("askorbinki-theme", value); } catch {} }
+}
+try {
+  applyAccent(localStorage.getItem("askorbinki-accent") || "#b6f34a", false);
+  applyTheme(localStorage.getItem("askorbinki-theme") || "dark", false);
+} catch { applyAccent("#b6f34a", false); applyTheme("dark", false); }
+$("#themeToggle").addEventListener("click", () => applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
+$(".swatches").addEventListener("click", event => {
+  const button = event.target.closest(".swatch"); if (button) applyAccent(button.dataset.color);
+});
+$("#accentPicker").addEventListener("input", event => applyAccent(event.currentTarget.value));
 $("#year").textContent = new Date().getFullYear();
 
 const cfg = window.ASKORBINKI_CONFIG ?? {};
@@ -167,12 +197,27 @@ if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) {
   });
 
   $("#logout").addEventListener("click", async () => { await db.auth.signOut(); profile = null; markSession(null); toast("Ты вышел из аккаунта"); });
+  $("#myReports").addEventListener("click", e => {
+    const button = e.target.closest("[data-edit-report]"); if (!button) return;
+    const report = reportRows.find(row => row.id === button.dataset.editReport); if (!report) return;
+    editingReportId = report.id;
+    $("#reportForm").elements.neurons.value = report.neurons;
+    $("#reportForm").elements.note.value = report.note ?? "";
+    $("#reportFormTitle").textContent = `ИЗМЕНИТЬ ОТЧЁТ · ${new Date(`${report.report_date}T12:00:00`).toLocaleDateString("ru-RU")}`;
+    $("#reportSubmit").textContent = "СОХРАНИТЬ ИЗМЕНЕНИЯ";
+    $("#cancelReportEdit").classList.remove("hidden");
+    $("#reportForm").scrollIntoView({ behavior: "smooth", block: "center" });
+  });
+  $("#cancelReportEdit").addEventListener("click", resetReportEditor);
   $("#reportForm").addEventListener("submit", async e => {
     e.preventDefault(); if (!user) return openAuth("login"); const f = new FormData(e.currentTarget);
-    const report = { user_id: user.id, report_date: kyivDate(), neurons: Number(f.get("neurons")), note: String(f.get("note") ?? "").trim() };
-    const { error } = await db.from("daily_reports").insert(report);
-    if (error) { toast(error.code === "23505" ? "За сегодня отчёт уже отправлен." : errMessage(error), true); return; }
-    e.currentTarget.reset(); toast("Нейроны начислены и добавлены в рейтинг."); await Promise.all([loadReports(), loadRoster()]);
+    const values = { neurons: Number(f.get("neurons")), note: String(f.get("note") ?? "").trim() };
+    const result = editingReportId
+      ? await db.from("daily_reports").update(values).eq("id", editingReportId).eq("user_id", user.id)
+      : await db.from("daily_reports").insert({ ...values, user_id: user.id, report_date: kyivDate() });
+    if (result.error) { toast(!editingReportId && result.error.code === "23505" ? "За сегодня отчёт уже отправлен." : errMessage(result.error), true); return; }
+    const wasEdit = Boolean(editingReportId); resetReportEditor();
+    toast(wasEdit ? "Отчёт обновлён." : "Нейроны начислены и добавлены в рейтинг."); await Promise.all([loadReports(), loadRoster()]);
   });
   $("#postForm").addEventListener("submit", async e => {
     e.preventDefault(); if (!profile || !["leader", "deputy", "developer"].includes(role)) return;

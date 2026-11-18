@@ -71,6 +71,26 @@ grant select on public.posts, public.polls, public.poll_options to anon, authent
 grant insert, update, delete on public.posts, public.polls, public.poll_options to authenticated;
 grant select, insert, update on public.poll_votes to authenticated;
 
+-- Keep this migration rerunnable if a previous SQL Editor run stopped partway through.
+drop policy if exists "read own profile or staff" on public.profiles;
+drop policy if exists "profile owner can edit nickname" on public.profiles;
+drop policy if exists "read own reports or staff" on public.daily_reports;
+drop policy if exists "report own current day" on public.daily_reports;
+drop policy if exists "posts public read" on public.posts;
+drop policy if exists "staff create posts" on public.posts;
+drop policy if exists "staff update posts" on public.posts;
+drop policy if exists "staff delete posts" on public.posts;
+drop policy if exists "polls public read" on public.polls;
+drop policy if exists "staff create polls" on public.polls;
+drop policy if exists "staff update polls" on public.polls;
+drop policy if exists "staff delete polls" on public.polls;
+drop policy if exists "options public read" on public.poll_options;
+drop policy if exists "staff add options" on public.poll_options;
+drop policy if exists "staff delete options" on public.poll_options;
+drop policy if exists "own vote read" on public.poll_votes;
+drop policy if exists "vote in open poll" on public.poll_votes;
+drop policy if exists "change own vote in open poll" on public.poll_votes;
+
 create policy "read own profile or staff" on public.profiles for select to authenticated
 using (user_id = auth.uid() or (select public.current_clan_role()) in ('leader','deputy','developer'));
 create policy "profile owner can edit nickname" on public.profiles for update to authenticated
@@ -121,12 +141,12 @@ create or replace function public.get_public_roster()
 returns table(nickname text, role text, joined_on date, weekly_neurons bigint, monthly_neurons bigint, total_neurons bigint)
 language sql stable security definer set search_path = ''
 as $$
-  select p.nickname, p.role, p.created_at::date,
-    coalesce(sum(r.neurons) filter (where r.report_date >= date_trunc('week', timezone('Europe/Kyiv', now())::date)::date), 0)::bigint,
-    coalesce(sum(r.neurons) filter (where r.report_date >= date_trunc('month', timezone('Europe/Kyiv', now())::date)::date), 0)::bigint,
-    coalesce(sum(r.neurons), 0)::bigint
+  select p.nickname, p.role, p.created_at::date as joined_on,
+    coalesce(sum(r.neurons) filter (where r.report_date >= date_trunc('week', timezone('Europe/Kyiv', now())::date)::date), 0)::bigint as weekly_neurons,
+    coalesce(sum(r.neurons) filter (where r.report_date >= date_trunc('month', timezone('Europe/Kyiv', now())::date)::date), 0)::bigint as monthly_neurons,
+    coalesce(sum(r.neurons), 0)::bigint as total_neurons
   from public.profiles p left join public.daily_reports r on r.user_id = p.user_id
-  group by p.user_id order by total_neurons desc, p.nickname asc;
+  group by p.user_id order by coalesce(sum(r.neurons), 0)::bigint desc, p.nickname asc;
 $$;
 revoke all on function public.get_public_roster() from public;
 grant execute on function public.get_public_roster() to anon, authenticated;
@@ -145,4 +165,3 @@ as $$
 $$;
 revoke all on function public.get_public_polls() from public;
 grant execute on function public.get_public_polls() to anon, authenticated;
-

@@ -8,3 +8,6 @@ verify_jwt = false
 
 [functions.bootstrap-developer]
 verify_jwt = false
+
+[functions.kick-member]
+verify_jwt = true

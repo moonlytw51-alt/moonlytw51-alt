@@ -1,0 +1,10 @@
+project_id = "askorbinki-clan"
+
+[functions.register]
+verify_jwt = false
+
+[functions.login]
+verify_jwt = false
+
+[functions.bootstrap-developer]
+verify_jwt = false

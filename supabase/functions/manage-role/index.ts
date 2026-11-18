@@ -15,7 +15,7 @@ Deno.serve(async (req) => {
     const id = String(playerId ?? "").trim().toLowerCase();
     const allowed = ["member", "deputy", "leader", "developer"];
     if (!/^[a-z0-9_]{3,24}$/.test(id) || !allowed.includes(role)) return json(400, { error: "Проверь ID и роль" });
-    const { data: profile, error } = await admin.from("profiles").select("user_id, role").eq("player_id", id).single();
+    const { data: profile, error } = await admin.from("profiles").select("user_id, role").eq("player_id", id).is("kicked_at", null).single();
     if (error || !profile) return json(404, { error: "Аккаунт не найден" });
     if (profile.user_id === caller.user.id && role !== "developer") return json(400, { error: "Нельзя снять роль разработчика со своего аккаунта здесь" });
     if (profile.role === "developer" && role !== "developer") {

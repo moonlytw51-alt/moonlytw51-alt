@@ -145,3 +145,4 @@ as $$
 $$;
 revoke all on function public.get_public_polls() from public;
 grant execute on function public.get_public_polls() to anon, authenticated;
+

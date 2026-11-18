@@ -2,5 +2,5 @@
 // service_role key сюда никогда не добавляй.
 window.ASKORBINKI_CONFIG = {
   supabaseUrl: "https://supabase.com/dashboard/project/qvnovkyhmfynavumuakj",
-  supabaseAnonKey: ""
+  supabaseAnonKey: "sb_publishable_oIys_a108aDdB94W4lgosw_awtTN1Ua"
 };

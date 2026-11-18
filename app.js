@@ -18,7 +18,7 @@ function kyivDate() {
 }
 function route(name) {
   if (name === "reports" && !user) { openAuth("login"); toast("Войди, чтобы отправить отчёт", true); return; }
-  if (name === "admin" && role !== "developer") { toast("Раздел доступен разработчику", true); return; }
+  if (name === "admin" && !["leader", "deputy", "developer"].includes(role)) { toast("Раздел доступен штабу клана", true); return; }
   $$(".page").forEach(p => p.classList.toggle("active", p.dataset.page === name));
   $$(".navlink").forEach(b => b.classList.toggle("active", b.dataset.route === name));
   $(".navlinks").classList.remove("open"); history.replaceState(null, "", `#${name}`); window.scrollTo({ top: 0, behavior: "smooth" });
@@ -42,6 +42,7 @@ function markSession(session) {
   $("#userBadge").classList.toggle("hidden", !user); $("#userBadge").textContent = user ? `${profile?.nickname ?? user.user_metadata?.player_id ?? "Участник"} · ${roleLabel(role)}` : "";
   $("#bootstrapBox").classList.toggle("hidden", !user || role === "developer");
   $$(".staff-only").forEach(el => el.classList.toggle("hidden", !["leader", "deputy", "developer"].includes(role)));
+  $$(".developer-only").forEach(el => el.classList.toggle("hidden", role !== "developer"));
 }
 async function loadProfile() {
   if (!user) { profile = null; markSession(null); return; }
@@ -98,12 +99,24 @@ async function loadReports() {
 }
 async function loadRoleList() {
   if (role !== "developer") return;
-  const { data, error } = await db.from("profiles").select("user_id,player_id,nickname,role").order("nickname");
+  const { data, error } = await db.from("profiles").select("user_id,player_id,nickname,role").is("kicked_at", null).order("nickname");
   if (error) throw error;
   $("#roleList").innerHTML = data?.length ? data.map(p => `<div class="role-row"><strong>${esc(p.nickname)}</strong><small>${esc(p.player_id)}</small><select data-role-user="${esc(p.player_id)}" aria-label="Роль для ${esc(p.nickname)}"><option value="member" ${p.role === "member" ? "selected" : ""}>Участник</option><option value="deputy" ${p.role === "deputy" ? "selected" : ""}>Заместитель</option><option value="leader" ${p.role === "leader" ? "selected" : ""}>Лидер</option><option value="developer" ${p.role === "developer" ? "selected" : ""}>Разработчик</option></select></div>`).join("") : empty("Нет аккаунтов.");
 }
+async function loadKickList() {
+  if (!["leader", "deputy", "developer"].includes(role)) return;
+  const { data, error } = await db.from("profiles").select("player_id,nickname,role").is("kicked_at", null).order("nickname");
+  if (error) throw error;
+  const canKick = targetRole => role === "leader" ? ["member", "deputy"].includes(targetRole)
+    : role === "deputy" ? targetRole === "member"
+    : role === "developer" ? ["member", "deputy", "leader"].includes(targetRole) : false;
+  $("#kickList").innerHTML = data?.length ? data.map(p => {
+    const allowed = canKick(p.role) && p.player_id !== user?.user_metadata?.player_id;
+    return `<div class="role-row"><div><strong>${esc(p.nickname)}</strong><small>${esc(p.player_id)} · ${roleLabel(p.role)}</small></div><button class="btn btn-small btn-ghost danger" data-kick-user="${esc(p.player_id)}" ${allowed ? "" : "disabled"}>ИСКЛЮЧИТЬ</button></div>`;
+  }).join("") : empty("Нет активных аккаунтов.");
+}
 async function refreshAll() {
-  try { await Promise.all([loadRoster(), loadPosts(), loadPolls()]); if (user) await Promise.all([loadReports(), loadRoleList()]); }
+  try { await Promise.all([loadRoster(), loadPosts(), loadPolls()]); if (user) await Promise.all([loadReports(), loadRoleList(), loadKickList()]); }
   catch (e) { console.error(e); toast(`Не удалось загрузить данные: ${e.message ?? e}`, true); }
 }
 function errMessage(error) { return error?.message || error?.context?.error || "Что-то пошло не так."; }
@@ -192,6 +205,15 @@ if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) {
     const sel = e.target.closest("[data-role-user]"); if (!sel) return;
     const { error } = await db.functions.invoke("manage-role", { body: { playerId: sel.dataset.roleUser, role: sel.value } });
     if (error) { toast(errMessage(error), true); await loadRoleList(); return; } toast("Роль обновлена. Новый доступ появится после следующего входа."); await loadRoleList();
+  });
+  $("#kickList").addEventListener("click", async e => {
+    const button = e.target.closest("[data-kick-user]"); if (!button) return;
+    const playerId = button.dataset.kickUser;
+    if (!confirm(`Исключить аккаунт ${playerId} из клана? Его отчёты и публикации останутся в истории.`)) return;
+    button.disabled = true;
+    const { error } = await db.functions.invoke("kick-member", { body: { playerId } });
+    if (error) { toast(errMessage(error), true); await loadKickList(); return; }
+    toast("Аккаунт исключён из клана."); await Promise.all([loadKickList(), loadRoster(), loadRoleList()]);
   });
   $("#bootstrapForm").addEventListener("submit", async e => {
     e.preventDefault(); const f = new FormData(e.currentTarget), playerId = String(f.get("playerId")).trim().toLowerCase(), secret = String(f.get("secret"));

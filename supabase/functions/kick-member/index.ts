@@ -56,4 +56,3 @@ Deno.serve(async (req) => {
     return json(400, { error: "Не удалось выполнить исключение" });
   }
 });
-
